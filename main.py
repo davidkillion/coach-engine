@@ -1,9 +1,9 @@
 """
 Discovery Coaching Engine
 Location: /var/www/coach-engine/dev/main.py
-Version: v1.8.0
-Changes: Added structured logging to logs/app.log, /logs endpoint for
-         frontend debug panel, detailed error capture per pipeline step.
+Version: v1.9.0
+Changes: Fixed ElevenLabs model — switched from deprecated eleven_monolingual_v1
+         to eleven_turbo_v2_5 (current free-tier supported model).
 """
 
 import os
@@ -12,7 +12,6 @@ import asyncio
 import httpx
 import anthropic
 import logging
-import json
 from datetime import datetime, timezone
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,7 +32,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("coach-engine")
 
-# In-memory log buffer for /logs endpoint (last 100 entries)
 log_buffer = []
 
 def log(level: str, step: str, message: str, detail: str = ""):
@@ -131,7 +129,9 @@ Never reinforce victimhood. Keep responses under 150 words."""}]
                 "generationConfig": {"temperature": 0.7}
             }
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            log("error", "AI:Gemini", f"HTTP {response.status_code}", response.text[:300])
+            response.raise_for_status()
         text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         log("info", "AI:Gemini", f"Response: {text[:80]}...")
         return text
@@ -173,7 +173,7 @@ async def elevenlabs_tts(text: str, api_key: str) -> bytes:
             },
             json={
                 "text": text,
-                "model_id": "eleven_monolingual_v1",
+                "model_id": "eleven_turbo_v2_5",
                 "voice_settings": {
                     "stability": 0.5,
                     "similarity_boost": 0.75
@@ -190,12 +190,11 @@ async def elevenlabs_tts(text: str, api_key: str) -> bytes:
 
 @app.get("/")
 def read_root():
-    return {"engine": "Coach Engine", "status": "operational", "version": "v1.8.0"}
+    return {"engine": "Coach Engine", "status": "operational", "version": "v1.9.0"}
 
 
 @app.get("/logs")
 def get_logs(n: int = 50):
-    """Return last n log entries for the frontend debug panel."""
     return JSONResponse(content=log_buffer[-n:])
 
 
