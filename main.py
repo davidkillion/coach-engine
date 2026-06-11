@@ -114,7 +114,7 @@ async def run_gemini(user_text: str, philosophy: str, api_key: str) -> str:
     log("info", "AI:Gemini", f"Sending: {user_text[:80]}...")
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-latest:generateContent?key={api_key}",
             json={
                 "system_instruction": {
                     "parts": [{"text": f"""You are David Killion's coaching voice. Respond based on this philosophy:
