@@ -1,9 +1,14 @@
 """
 Discovery Coaching Engine
 Location: /var/www/coach-engine/dev/main.py
-Version: v1.9.0
-Changes: Fixed ElevenLabs model — switched from deprecated eleven_monolingual_v1
-         to eleven_turbo_v2_5 (current free-tier supported model).
+Version: v2.00.0001
+
+CHANGELOG:
+v2.00.0001 - New versioning scheme. Added philosophy caching:
+             accepts philosophy, philosophy_hash, conversation_id params.
+             In-memory cache keyed by hash — only updates when hash changes.
+             Falls back to local financial_philosophy.md if no doc sent.
+             Fixed Gemini model to gemini-2.5-flash.
 """
 
 import os
@@ -48,6 +53,32 @@ def log(level: str, step: str, message: str, detail: str = ""):
     getattr(logger, level.lower(), logger.info)(f"[{step}] {message} {detail}".strip())
 
 
+# --- Philosophy Cache ---
+# { hash: philosophy_text }
+philosophy_cache: dict[str, str] = {}
+
+def get_philosophy(philosophy: str, philosophy_hash: str) -> str:
+    """
+    Use provided philosophy doc if given.
+    Cache by hash so we don't re-store identical docs.
+    Fall back to local file if nothing provided.
+    """
+    if philosophy and philosophy_hash:
+        if philosophy_hash not in philosophy_cache:
+            philosophy_cache[philosophy_hash] = philosophy
+            log("info", "CACHE", f"New philosophy cached — hash={philosophy_hash[:8]}... len={len(philosophy)}")
+        else:
+            log("info", "CACHE", f"Cache hit — hash={philosophy_hash[:8]}...")
+        return philosophy_cache[philosophy_hash]
+
+    # Fallback to local file
+    local = "financial_philosophy.md"
+    if os.path.exists(local):
+        with open(local, "r", encoding="utf-8") as f:
+            return f.read()
+    return "You are a direct, no-fluff business and financial coach."
+
+
 app = FastAPI(title="Coach Engine")
 
 app.add_middleware(
@@ -57,15 +88,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-DEFAULT_PHILOSOPHY = "financial_philosophy.md"
-
-
-def get_coaching_philosophy() -> str:
-    if os.path.exists(DEFAULT_PHILOSOPHY):
-        with open(DEFAULT_PHILOSOPHY, "r", encoding="utf-8") as f:
-            return f.read()
-    return "You are a direct, no-fluff business and financial coach."
 
 
 def make_safe_header(text: str) -> str:
@@ -114,7 +136,7 @@ async def run_gemini(user_text: str, philosophy: str, api_key: str) -> str:
     log("info", "AI:Gemini", f"Sending: {user_text[:80]}...")
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-latest:generateContent?key={api_key}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",
             json={
                 "system_instruction": {
                     "parts": [{"text": f"""You are David Killion's coaching voice. Respond based on this philosophy:
@@ -190,7 +212,7 @@ async def elevenlabs_tts(text: str, api_key: str) -> bytes:
 
 @app.get("/")
 def read_root():
-    return {"engine": "Coach Engine", "status": "operational", "version": "v1.9.0"}
+    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0001"}
 
 
 @app.get("/logs")
@@ -200,11 +222,14 @@ def get_logs(n: int = 50):
 
 @app.post("/upload-audio")
 async def handle_audio_coaching(
-    file: UploadFile = File(...),
-    ai:  str = Form(default="claude"),
-    tts: str = Form(default="openai")
+    file:             UploadFile = File(...),
+    ai:               str = Form(default="claude"),
+    tts:              str = Form(default="openai"),
+    conversation_id:  str = Form(default=""),
+    philosophy:       str = Form(default=""),
+    philosophy_hash:  str = Form(default="")
 ):
-    log("info", "REQUEST", f"ai={ai} tts={tts} file={file.filename}")
+    log("info", "REQUEST", f"ai={ai} tts={tts} conv={conversation_id[:8] if conversation_id else 'none'} hash={philosophy_hash[:8] if philosophy_hash else 'none'}")
 
     allowed_extensions = ["mp3", "wav", "m4a", "webm"]
     file_extension = file.filename.split(".")[-1].lower()
@@ -218,9 +243,9 @@ async def handle_audio_coaching(
     elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
 
     try:
-        audio_bytes = await file.read()
-        philosophy  = get_coaching_philosophy()
-        loop        = asyncio.get_event_loop()
+        audio_bytes    = await file.read()
+        active_philosophy = get_philosophy(philosophy, philosophy_hash)
+        loop           = asyncio.get_event_loop()
 
         # Step 1: Whisper STT
         filename  = f"user_voice.{file_extension}"
@@ -228,9 +253,9 @@ async def handle_audio_coaching(
 
         # Step 2: AI response
         if ai == "gemini":
-            coach_text = await run_gemini(user_text, philosophy, gemini_key)
+            coach_text = await run_gemini(user_text, active_philosophy, gemini_key)
         else:
-            coach_text = await loop.run_in_executor(None, run_claude, user_text, philosophy, anthropic_key)
+            coach_text = await loop.run_in_executor(None, run_claude, user_text, active_philosophy, anthropic_key)
 
         # Step 3: TTS
         if tts == "elevenlabs":
