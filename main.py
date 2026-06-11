@@ -1,16 +1,19 @@
 """
 Discovery Coaching Engine
 Location: /var/www/coach-engine/dev/main.py
-Version: v2.00.0003
+Version: v2.00.0004
 
 CHANGELOG:
-v2.00.0003 - Removed ALL fallback philosophy logic. A primer MUST be sent on
-             the first turn of every conversation (cached by hash thereafter).
-             If a new conversation arrives with no primer and no cached match,
-             the engine returns HTTP 422 — no silent generic-coach fallback.
-             Deleted local financial_philosophy.md dependency entirely.
+v2.00.0004 - Dual STT support + CORS header fix:
+             * NEW /coach-text endpoint — accepts already-transcribed text
+               (from browser Web Speech API), skips Whisper, runs AI + TTS.
+               Used by Chrome/Edge desktop + Android (the "Native" STT path).
+             * /upload-audio unchanged — the Whisper path for iOS/Safari/Firefox.
+             * Both paths share conversation history + primer cache.
+             * CORS expose_headers=["X-Coach-Text"] so the browser can read the
+               coach text on cross-origin responses (fixes "No text returned").
+v2.00.0003 - Removed all primer fallback logic.
 v2.00.0002 - Conversation history + primer-as-full-prompt + prompt caching.
-v2.00.0001 - Philosophy caching by hash; Gemini 2.5-flash.
 """
 
 import os
@@ -53,22 +56,13 @@ def log(level: str, step: str, message: str, detail: str = ""):
 philosophy_cache: dict[str, str] = {}
 
 def resolve_philosophy(philosophy: str, philosophy_hash: str) -> str | None:
-    """
-    Resolve the primer for this request.
-    - If full philosophy + hash sent: cache and use it.
-    - If only hash sent and we have it cached: use cache.
-    - Otherwise: return None. NO fallback. Caller must reject the request.
-    """
     if philosophy and philosophy_hash:
         if philosophy_hash not in philosophy_cache:
             philosophy_cache[philosophy_hash] = philosophy
             log("info", "CACHE", f"New philosophy cached — hash={philosophy_hash[:8]} len={len(philosophy)}")
         return philosophy_cache[philosophy_hash]
-
     if philosophy_hash and philosophy_hash in philosophy_cache:
         return philosophy_cache[philosophy_hash]
-
-    # No primer available — explicit failure, no generic fallback.
     return None
 
 
@@ -95,8 +89,11 @@ def trim_history(conv: dict):
 app = FastAPI(title="Coach Engine")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Coach-Text"],  # let browser read coach text cross-origin
 )
 
 
@@ -104,7 +101,7 @@ def make_safe_header(text: str) -> str:
     return text.replace("\r", " ").replace("\n", " ").encode("ascii", errors="replace").decode("ascii")
 
 
-# --- STT ---
+# --- STT (Whisper) ---
 async def whisper_transcribe(audio_bytes: bytes, filename: str, api_key: str) -> str:
     log("info", "STT", f"Sending {len(audio_bytes)} bytes to Whisper")
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -196,9 +193,46 @@ async def elevenlabs_tts(text: str, api_key: str) -> bytes:
         return data
 
 
+# --- Shared: run AI + TTS given transcribed text ---
+async def process_coaching(user_text: str, ai: str, tts: str, conversation_id: str,
+                           philosophy_text: str, philosophy_hash: str,
+                           keys: dict) -> tuple[bytes, str, str]:
+    conv = get_conversation(conversation_id, philosophy_hash)
+    loop = asyncio.get_event_loop()
+
+    conv["messages"].append({"role": "user", "content": user_text})
+
+    if ai == "gemini":
+        coach_text = await run_gemini(conv["messages"], philosophy_text, keys["gemini"])
+    else:
+        coach_text = await loop.run_in_executor(None, run_claude, conv["messages"], philosophy_text, keys["anthropic"])
+
+    conv["messages"].append({"role": "assistant", "content": coach_text})
+    trim_history(conv)
+
+    if tts == "elevenlabs":
+        audio_data = await elevenlabs_tts(coach_text, keys["elevenlabs"])
+        media_type = "audio/mpeg"
+    else:
+        audio_data = await openai_tts(coach_text, keys["openai"])
+        media_type = "audio/wav"
+
+    log("info", "COMPLETE", f"Success — {len(audio_data)} bytes, history now {len(conv['messages'])} msgs")
+    return audio_data, media_type, coach_text
+
+
+def get_keys() -> dict:
+    return {
+        "anthropic":  os.getenv("ANTHROPIC_API_KEY"),
+        "openai":     os.getenv("OPENAI_API_KEY"),
+        "gemini":     os.getenv("GEMINI_API_KEY"),
+        "elevenlabs": os.getenv("ELEVENLABS_API_KEY"),
+    }
+
+
 @app.get("/")
 def read_root():
-    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0003"}
+    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0004"}
 
 
 @app.get("/logs")
@@ -206,6 +240,7 @@ def get_logs(n: int = 50):
     return JSONResponse(content=log_buffer[-n:])
 
 
+# --- WHISPER PATH: audio in, audio out ---
 @app.post("/upload-audio")
 async def handle_audio_coaching(
     file:             UploadFile = File(...),
@@ -215,7 +250,7 @@ async def handle_audio_coaching(
     philosophy:       str = Form(default=""),
     philosophy_hash:  str = Form(default="")
 ):
-    log("info", "REQUEST", f"ai={ai} tts={tts} conv={conversation_id[:8]} hash={philosophy_hash[:8] if philosophy_hash else 'none'}")
+    log("info", "REQUEST", f"[audio] ai={ai} tts={tts} conv={conversation_id[:8]} hash={philosophy_hash[:8] if philosophy_hash else 'none'}")
 
     allowed_extensions = ["mp3", "wav", "m4a", "webm"]
     file_extension = file.filename.split(".")[-1].lower()
@@ -223,57 +258,61 @@ async def handle_audio_coaching(
         log("error", "REQUEST", f"Unsupported format: {file_extension}")
         raise HTTPException(status_code=400, detail="Unsupported audio format.")
 
-    # --- Primer required — no fallback ---
     philosophy_text = resolve_philosophy(philosophy, philosophy_hash)
     if philosophy_text is None:
-        log("error", "PRIMER", "No primer available — rejecting request",
-            f"hash={philosophy_hash[:8] if philosophy_hash else 'none'}")
-        raise HTTPException(
-            status_code=422,
-            detail="No primer document available. The first turn of a conversation must include a philosophy document."
-        )
+        log("error", "PRIMER", "No primer available — rejecting request")
+        raise HTTPException(status_code=422, detail="No primer document available.")
 
-    anthropic_key  = os.getenv("ANTHROPIC_API_KEY")
-    openai_key     = os.getenv("OPENAI_API_KEY")
-    gemini_key     = os.getenv("GEMINI_API_KEY")
-    elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
-
+    keys = get_keys()
     try:
         audio_bytes = await file.read()
-        conv = get_conversation(conversation_id, philosophy_hash)
-        loop = asyncio.get_event_loop()
+        filename    = f"user_voice.{file_extension}"
+        user_text   = await whisper_transcribe(audio_bytes, filename, keys["openai"])
 
-        # Step 1: Whisper STT
-        filename  = f"user_voice.{file_extension}"
-        user_text = await whisper_transcribe(audio_bytes, filename, openai_key)
-
-        conv["messages"].append({"role": "user", "content": user_text})
-
-        # Step 2: AI response with full history
-        if ai == "gemini":
-            coach_text = await run_gemini(conv["messages"], philosophy_text, gemini_key)
-        else:
-            coach_text = await loop.run_in_executor(None, run_claude, conv["messages"], philosophy_text, anthropic_key)
-
-        conv["messages"].append({"role": "assistant", "content": coach_text})
-        trim_history(conv)
-
-        # Step 3: TTS
-        if tts == "elevenlabs":
-            audio_data = await elevenlabs_tts(coach_text, elevenlabs_key)
-            media_type = "audio/mpeg"
-        else:
-            audio_data = await openai_tts(coach_text, openai_key)
-            media_type = "audio/wav"
-
-        log("info", "COMPLETE", f"Success — {len(audio_data)} bytes, history now {len(conv['messages'])} msgs")
+        audio_data, media_type, coach_text = await process_coaching(
+            user_text, ai, tts, conversation_id, philosophy_text, philosophy_hash, keys
+        )
 
         return StreamingResponse(
             io.BytesIO(audio_data),
             media_type=media_type,
             headers={"X-Coach-Text": make_safe_header(coach_text)}
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log("error", "ERROR", str(e), type(e).__name__)
+        raise HTTPException(status_code=500, detail=f"Engine fault: {str(e)}")
 
+
+# --- NATIVE PATH: text in, audio out (browser already transcribed) ---
+@app.post("/coach-text")
+async def handle_text_coaching(
+    text:             str = Form(...),
+    ai:               str = Form(default="claude"),
+    tts:              str = Form(default="openai"),
+    conversation_id:  str = Form(default="default"),
+    philosophy:       str = Form(default=""),
+    philosophy_hash:  str = Form(default="")
+):
+    log("info", "REQUEST", f"[text] ai={ai} tts={tts} conv={conversation_id[:8]} hash={philosophy_hash[:8] if philosophy_hash else 'none'}")
+    log("info", "STT", f"Native transcript: {text}")
+
+    philosophy_text = resolve_philosophy(philosophy, philosophy_hash)
+    if philosophy_text is None:
+        log("error", "PRIMER", "No primer available — rejecting request")
+        raise HTTPException(status_code=422, detail="No primer document available.")
+
+    keys = get_keys()
+    try:
+        audio_data, media_type, coach_text = await process_coaching(
+            text.strip(), ai, tts, conversation_id, philosophy_text, philosophy_hash, keys
+        )
+        return StreamingResponse(
+            io.BytesIO(audio_data),
+            media_type=media_type,
+            headers={"X-Coach-Text": make_safe_header(coach_text)}
+        )
     except HTTPException:
         raise
     except Exception as e:
