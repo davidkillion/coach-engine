@@ -1,9 +1,12 @@
 """
 Discovery Coaching Engine
 Location: /var/www/coach-engine/dev/main.py
-Version: v2.00.0004
+Version: v2.00.0009
 
 CHANGELOG:
+v2.00.0009 - Header version sync (cosmetic). Added POST /logs/clear endpoint so the debug panel's Clear button
+             actually empties the in-memory log buffer (was repopulating on
+             next poll). Header version synced to match functional version.
 v2.00.0004 - Dual STT support + CORS header fix:
              * NEW /coach-text endpoint — accepts already-transcribed text
                (from browser Web Speech API), skips Whisper, runs AI + TTS.
@@ -232,7 +235,7 @@ def get_keys() -> dict:
 
 @app.get("/")
 def read_root():
-    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0008"}
+    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0009"}
 
 
 @app.get("/logs")
