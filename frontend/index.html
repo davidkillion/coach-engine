@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discovery Coaching Portal</title>
+    <style>
+        :root {
+            --bg-color: #121214; --card-bg: #1a1a1e; --primary: #4f46e5; --primary-hover: #4338ca;
+            --text-main: #f3f4f6; --text-muted: #9ca3af; --accent-green: #10b981;
+            --accent-red: #ef4444; --accent-gold: #f0b429; --toggle-bg: #2d2d35; --toggle-active: #4f46e5;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg-color); color: var(--text-main); display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
+        .container { background-color: var(--card-bg); border-radius: 16px; padding: 32px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); width: 100%; max-width: 480px; text-align: center; margin-bottom: 20px; position: relative; }
+        h1 { font-size: 1.8rem; margin-bottom: 4px; font-weight: 700; }
+        p.subtitle { color: var(--text-muted); margin-bottom: 24px; font-size: 0.9rem; cursor: default; user-select: none; }
+        .active-primer-badge { display: inline-block; background: rgba(240,180,41,0.12); border: 1px solid rgba(240,180,41,0.3); border-radius: 20px; padding: 3px 10px; font-size: 0.72rem; color: var(--accent-gold); margin-bottom: 16px; }
+        #consoleBtn { display: none; position: absolute; top: 14px; right: 14px; background: rgba(240,180,41,0.15); border: 1px solid rgba(240,180,41,0.4); color: var(--accent-gold); font-size: 0.72rem; font-weight: 600; padding: 5px 12px; border-radius: 6px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.05em; }
+        #consoleBtn:hover { background: rgba(240,180,41,0.25); } #consoleBtn.active { background: var(--accent-gold); color: #121214; }
+        .toggle-panel { background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 16px; margin-bottom: 24px; text-align: left; }
+        .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; } .toggle-row:last-child { margin-bottom: 0; }
+        .toggle-label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; min-width: 80px; }
+        .toggle-options { display: flex; background: var(--toggle-bg); border-radius: 6px; padding: 3px; gap: 3px; }
+        .toggle-btn { padding: 5px 12px; border-radius: 4px; border: none; background: transparent; color: var(--text-muted); font-size: 0.78rem; font-weight: 500; cursor: pointer; transition: all 0.2s ease; white-space: nowrap; }
+        .toggle-btn.active { background: var(--toggle-active); color: white; }
+        .stt-indicator { font-size: 0.72rem; color: var(--text-muted); margin-top: 8px; text-align: center; opacity: 0.8; }
+        .stt-indicator span { color: var(--accent-green); font-weight: 600; }
+        .permission-banner { display: none; background: rgba(239,68,68,0.15); border: 1px solid var(--accent-red); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-size: 0.85rem; color: #fca5a5; line-height: 1.5; }
+        .controls-wrapper { position: relative; width: 160px; height: 160px; margin: 0 auto 24px auto; display: flex; align-items: center; justify-content: center; }
+        .halo-ring { position: absolute; width: 116px; height: 116px; border-radius: 50%; border: 4px solid var(--primary); opacity: 0; box-sizing: border-box; pointer-events: none; }
+        .level-ring { position: absolute; width: 116px; height: 116px; border-radius: 50%; border: 3px solid var(--accent-green); opacity: 0; box-sizing: border-box; pointer-events: none; transition: transform 0.08s ease-out, opacity 0.2s; }
+        .controls-wrapper.thinking .halo-ring { animation: haloPulse 1.5s infinite linear; }
+        .controls-wrapper.warmup .halo-ring { animation: haloPulse 0.8s infinite linear; }
+        @keyframes haloPulse { 0% { transform: scale(0.9); opacity: 0.8; border-color: var(--primary); } 50% { border-color: #818cf8; } 100% { transform: scale(1.5); opacity: 0; border-color: var(--primary); } }
+        .action-btn { position: relative; z-index: 2; width: 100px; height: 100px; border-radius: 50%; border: none; background-color: var(--primary); color: white; font-size: 0.82rem; font-weight: 600; cursor: pointer; box-shadow: 0 4px 15px rgba(79,70,229,0.4); transition: all 0.3s ease; display: flex; align-items: center; justify-content: center; outline: none; -webkit-tap-highlight-color: transparent; padding: 8px; line-height: 1.2; }
+        .action-btn:hover { background-color: var(--primary-hover); transform: scale(1.02); }
+        .action-btn.listening { background-color: var(--accent-green); box-shadow: 0 4px 20px rgba(16,185,129,0.5); }
+        .action-btn.warmup { background-color: var(--accent-gold); color: #121214; }
+        .action-btn.active-convo { background-color: var(--accent-red); box-shadow: 0 4px 20px rgba(239,68,68,0.5); }
+        .action-btn.disabled { background-color: #374151 !important; color: #6b7280; cursor: not-allowed; box-shadow: none; }
+        .status-box { font-size: 0.9rem; font-weight: 500; color: var(--text-muted); margin-bottom: 16px; min-height: 20px; }
+        .status-box.active { color: var(--accent-green); } .status-box.error { color: var(--accent-red); }
+        .status-box.warmup-text { color: var(--accent-gold); }
+        .status-box.thinking-text { color: #818cf8; animation: textBlink 1.5s infinite ease-in-out; }
+        @keyframes textBlink { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
+        .transcript-window { background-color: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 15px; min-height: 80px; max-height: 220px; overflow-y: auto; text-align: left; font-size: 0.95rem; line-height: 1.6; color: #d1d5db; scroll-behavior: smooth; }
+        .transcript-window .you-said { display: block; font-size: 0.78rem; color: var(--accent-green); margin-bottom: 8px; opacity: 0.85; }
+        .init-overlay { display: none; position: fixed; inset: 0; background: rgba(7,8,13,0.7); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); z-index: 1000; flex-direction: column; align-items: center; justify-content: center; gap: 24px; }
+        .init-overlay.show { display: flex; }
+        .init-spinner { width: 70px; height: 70px; border: 5px solid rgba(79,70,229,0.25); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.9s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .init-text { font-size: 1rem; font-weight: 600; color: var(--text-main); letter-spacing: 0.03em; animation: textBlink 1.5s infinite ease-in-out; }
+        .init-cancel-btn { margin-top: 8px; background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); color: #fca5a5; font-size: 0.82rem; font-weight: 600; padding: 10px 28px; border-radius: 8px; cursor: pointer; letter-spacing: 0.04em; transition: background 0.2s; -webkit-tap-highlight-color: transparent; }
+        .init-cancel-btn:hover { background: rgba(239,68,68,0.3); }
+        .mode-toggle { display: flex; background: var(--toggle-bg); border-radius: 8px; padding: 4px; gap: 4px; margin-bottom: 20px; }
+        .mode-btn { flex: 1; padding: 8px; border-radius: 5px; border: none; background: transparent; color: var(--text-muted); font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .mode-btn.active { background: var(--primary); color: white; }
+        .console-card { display: none; width: 100%; max-width: 480px; background-color: var(--card-bg); border: 1px solid rgba(240,180,41,0.25); border-radius: 16px; padding: 24px; margin-bottom: 20px; }
+        .console-card h2 { font-size: 1rem; font-weight: 700; color: var(--accent-gold); margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.08em; }
+        .console-layout { display: grid; grid-template-columns: 200px 1fr; gap: 16px; min-height: 320px; }
+        .doc-list-panel { border-right: 1px solid rgba(255,255,255,0.06); padding-right: 16px; }
+        .doc-list-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 8px; }
+        .doc-list { list-style: none; padding: 0; margin: 0 0 16px 0; }
+        .doc-list li { padding: 7px 10px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; color: var(--text-muted); transition: all 0.15s; word-break: break-all; display: flex; align-items: center; gap: 6px; }
+        .doc-list li:hover { background: rgba(255,255,255,0.05); color: var(--text-main); }
+        .doc-list li.selected { background: rgba(79,70,229,0.2); color: white; }
+        .doc-list li.active-doc::after { content: "●"; color: var(--accent-gold); font-size: 0.6rem; margin-left: auto; }
+        .new-doc-row { display: flex; gap: 6px; margin-top: 8px; }
+        .new-doc-input { flex: 1; background: var(--toggle-bg); border: 1px solid rgba(255,255,255,0.08); border-radius: 5px; color: var(--text-main); font-size: 0.75rem; padding: 5px 8px; outline: none; }
+        .new-doc-input::placeholder { color: var(--text-muted); }
+        .console-btn { background: var(--toggle-bg); border: 1px solid rgba(255,255,255,0.08); border-radius: 5px; color: var(--text-muted); font-size: 0.75rem; padding: 5px 10px; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+        .console-btn:hover { color: white; background: rgba(255,255,255,0.08); }
+        .console-btn.primary { background: var(--primary); color: white; border-color: var(--primary); }
+        .console-btn.primary:hover { background: var(--primary-hover); }
+        .console-btn.gold { background: rgba(240,180,41,0.15); color: var(--accent-gold); border-color: rgba(240,180,41,0.3); }
+        .console-btn.gold:hover { background: rgba(240,180,41,0.25); }
+        .doc-editor-panel { display: flex; flex-direction: column; gap: 10px; }
+        .doc-editor-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .doc-editor-name { font-size: 0.8rem; color: var(--text-muted); flex: 1; }
+        .doc-editor-name span { color: var(--text-main); font-weight: 500; }
+        .doc-textarea { flex: 1; min-height: 260px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; color: var(--text-main); font-family: "Courier New", monospace; font-size: 0.75rem; line-height: 1.6; padding: 12px; resize: vertical; outline: none; }
+        .doc-textarea:focus { border-color: rgba(79,70,229,0.4); }
+        .doc-action-row { display: flex; gap: 8px; justify-content: flex-end; }
+        .console-status { font-size: 0.72rem; color: var(--accent-green); min-height: 16px; text-align: right; }
+        .debug-panel { width: 100%; max-width: 980px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .debug-box { background-color: var(--card-bg); border-radius: 12px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+        .debug-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 6px; }
+        .debug-title { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); flex: 1; }
+        .debug-btn { font-size: 0.7rem; color: var(--text-muted); cursor: pointer; border: none; background: var(--toggle-bg); padding: 3px 9px; border-radius: 4px; transition: color 0.2s; }
+        .debug-btn:hover { color: white; }
+        .debug-log { font-family: "Courier New", monospace; font-size: 0.72rem; line-height: 1.6; height: 280px; overflow-y: auto; color: #9ca3af; }
+        .debug-log .log-entry { margin-bottom: 2px; } .debug-log .log-info { color: #9ca3af; } .debug-log .log-error { color: var(--accent-red); } .debug-log .log-warn { color: #f59e0b; }
+        .debug-log .ts { color: #555761; margin-right: 4px; } .debug-log .step { color: #818cf8; margin-right: 4px; }
+        .debug-status { font-size: 0.68rem; color: #555761; margin-top: 6px; text-align: right; }
+        @media (max-width: 640px) { .debug-panel { grid-template-columns: 1fr; } .console-layout { grid-template-columns: 1fr; } .doc-list-panel { border-right: none; border-bottom: 1px solid rgba(255,255,255,0.06); padding-right: 0; padding-bottom: 16px; } }
+    </style>
+</head>
+<body>
+
+    <div class="init-overlay" id="initOverlay">
+        <div class="init-spinner"></div>
+        <div class="init-text" id="initText">… initializing conversation …</div>
+        <button class="init-cancel-btn" onclick="cancelInit()">✕ Cancel</button>
+    </div>
+
+    <div class="container">
+        <button id="consoleBtn" onclick="toggleConsole()">Coach's Console</button>
+        <h1>Discovery Voice Coach</h1>
+        <p class="subtitle" id="versionLabel">Engine Test Interface · v2.00.0019</p>
+        <div class="active-primer-badge" id="activePrimerBadge">Loading primer...</div>
+        <div class="mode-toggle">
+            <button class="mode-btn active" data-mode="conversation" onclick="setMode('conversation')">💬 Conversation</button>
+            <button class="mode-btn" data-mode="push" onclick="setMode('push')">🎙 Push to Talk</button>
+        </div>
+        <div class="toggle-panel">
+            <div class="toggle-row">
+                <span class="toggle-label">Environment</span>
+                <div class="toggle-options">
+                    <button class="toggle-btn" data-group="env" data-value="prod">Prod</button>
+                    <button class="toggle-btn active" data-group="env" data-value="dev">Dev</button>
+                </div>
+            </div>
+            <div class="toggle-row">
+                <span class="toggle-label">AI Engine</span>
+                <div class="toggle-options">
+                    <button class="toggle-btn active" data-group="ai" data-value="claude">Claude</button>
+                    <button class="toggle-btn" data-group="ai" data-value="gemini">Gemini</button>
+                </div>
+            </div>
+            <div class="toggle-row">
+                <span class="toggle-label">TTS Voice</span>
+                <div class="toggle-options">
+                    <button class="toggle-btn active" data-group="tts" data-value="openai">OpenAI</button>
+                    <button class="toggle-btn" data-group="tts" data-value="elevenlabs">ElevenLabs</button>
+                </div>
+            </div>
+            <div class="stt-indicator">STT Engine: <span id="sttDisplay">detecting…</span></div>
+        </div>
+        <div class="permission-banner" id="permissionBanner">
+            🎤 Microphone access is required.<br>Tap <strong>Allow</strong> when prompted, or enable it in browser settings, then reload.
+        </div>
+        <div class="controls-wrapper" id="animationWrapper">
+            <div class="level-ring" id="levelRing"></div>
+            <div class="halo-ring"></div>
+            <button class="action-btn" id="micBtn">START</button>
+        </div>
+        <div class="status-box" id="statusLabel">Ready</div>
+        <div class="transcript-window" id="transcriptDisplay">Coach response will appear here...</div>
+    </div>
+
+    <div class="console-card" id="consoleCard">
+        <h2>🎛 Coach's Console</h2>
+        <div class="console-layout">
+            <div class="doc-list-panel">
+                <div class="doc-list-title">Primer Documents</div>
+                <ul class="doc-list" id="docList"></ul>
+                <div class="new-doc-row">
+                    <input class="new-doc-input" id="newDocName" placeholder="new-doc.md" />
+                    <button class="console-btn" onclick="createNewDoc()">+ New</button>
+                </div>
+            </div>
+            <div class="doc-editor-panel">
+                <div class="doc-editor-header"><div class="doc-editor-name">Editing: <span id="editingDocName">—</span></div></div>
+                <textarea class="doc-textarea" id="docTextarea" placeholder="Select a document to edit..."></textarea>
+                <div class="doc-action-row">
+                    <button class="console-btn gold" id="setActiveBtn" onclick="setActiveDoc()" disabled>Set as Active</button>
+                    <button class="console-btn primary" id="saveDocBtn" onclick="saveDoc()" disabled>Save</button>
+                </div>
+                <div class="console-status" id="consoleStatus"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="debug-panel">
+        <div class="debug-box">
+            <div class="debug-header">
+                <span class="debug-title">🖥 Server Logs (Azure)</span>
+                <button class="debug-btn" onclick="clearServerLogs()">Clear</button>
+                <button class="debug-btn" onclick="copyLogs()">Copy Both</button>
+            </div>
+            <div class="debug-log" id="serverLog"></div>
+            <div class="debug-status" id="serverLogStatus">Polling every 3s</div>
+        </div>
+        <div class="debug-box">
+            <div class="debug-header">
+                <span class="debug-title">🌐 Client Logs (Browser)</span>
+                <button class="debug-btn" onclick="clearClientLogs()">Clear</button>
+            </div>
+            <div class="debug-log" id="clientLog"></div>
+            <div class="debug-status" id="clientLogStatus">Live</div>
+        </div>
+    </div>
+
+<script>
+const VERSION    = "v2.00.0019";
+const PRIMER_API = "/test/primer.php";
+const ENDPOINTS  = { prod: "https://coach-engine.com", dev: "https://dev.coach-engine.com" };
+const state      = { env: "dev", ai: "claude", tts: "openai" };
+let mode = "conversation";
+let conversationId   = crypto.randomUUID();
+let isFirstTurn      = true;
+let cachedPhilosophy = { name: "", hash: "", content: "" };
+let consoleVisible   = false, consoleUnlocked = false;
+
+const SILENCE_THRESHOLD = 0.015;
+const SILENCE_DURATION  = 900;
+const MIN_SPEECH_MS     = 400;
+const WARMUP_MS         = 500;
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+function detectSTTEngine() {
+    const ua = navigator.userAgent;
+    const isIOS    = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    const isChrome  = /Chrome/.test(ua) && !/Edg|OPR/.test(ua);
+    const isEdge    = /Edg/.test(ua);
+    const isFirefox = /Firefox/.test(ua);
+    const isSafari  = /Safari/.test(ua) && !/Chrome|Edg|OPR/.test(ua);
+    if (isIOS || !SpeechRecognition || isFirefox || isSafari) return "whisper";
+    if (isChrome || isEdge) return "native";
+    return "whisper";
+}
+const STT_ENGINE = detectSTTEngine();
+document.getElementById("sttDisplay").textContent = STT_ENGINE === "native" ? "Native (browser)" : "Whisper (server)";
+
+document.addEventListener("keydown", e => { if(e.key==="8"&&e.ctrlKey){e.preventDefault();if(!consoleUnlocked)activateConsole();else toggleConsole();} });
+let tapCount=0, tapTimer=null;
+document.getElementById("versionLabel").addEventListener("click",()=>{tapCount++;clearTimeout(tapTimer);tapTimer=setTimeout(()=>tapCount=0,2000);if(tapCount>=5){tapCount=0;if(!consoleUnlocked)activateConsole();else toggleConsole();}});
+function activateConsole(){consoleUnlocked=true;document.getElementById("consoleBtn").style.display="block";clientLog("info","Console unlocked");toggleConsole();}
+function toggleConsole(){consoleVisible=!consoleVisible;document.getElementById("consoleCard").style.display=consoleVisible?"block":"none";document.getElementById("consoleBtn").classList.toggle("active",consoleVisible);if(consoleVisible)loadDocList();}
+function setMode(m){if(convoActive){clientLog("warn","Stop conversation before switching modes");return;}mode=m;document.querySelectorAll(".mode-btn").forEach(b=>b.classList.toggle("active",b.dataset.mode===m));micBtn.textContent="START";statusLabel.textContent="Ready";statusLabel.className="status-box";clientLog("info",`Mode: ${m}`);}
+document.querySelectorAll(".toggle-btn").forEach(btn=>{btn.addEventListener("click",()=>{const{group,value}=btn.dataset;state[group]=value;document.querySelectorAll(`[data-group="${group}"]`).forEach(b=>b.classList.remove("active"));btn.classList.add("active");});});
+
+async function loadActivePrimer(){try{const res=await fetch(`${PRIMER_API}?action=get_active`);const data=await res.json();if(data.active){cachedPhilosophy={name:data.active,hash:data.hash,content:data.content};document.getElementById("activePrimerBadge").textContent=`📄 ${data.active}`;clientLog("info",`Active primer: ${data.active} hash=${data.hash.substring(0,8)}`);}else document.getElementById("activePrimerBadge").textContent="No primer set";}catch(err){document.getElementById("activePrimerBadge").textContent="Primer unavailable";clientLog("warn",`Could not load primer: ${err.message}`);}}
+loadActivePrimer();
+let selectedDoc="";
+async function loadDocList(){try{const res=await fetch(`${PRIMER_API}?action=list`);const data=await res.json();const list=document.getElementById("docList");const active=cachedPhilosophy.name;list.innerHTML=data.files.map(f=>`<li class="${f===selectedDoc?"selected":""} ${f===active?"active-doc":""}" onclick="selectDoc('${f}')">${f}</li>`).join("");if(!data.files.length)list.innerHTML="<li style='color:#555761;font-style:italic'>No documents yet</li>";}catch(err){clientLog("error",`Doc list error: ${err.message}`);}}
+async function selectDoc(name){selectedDoc=name;try{const res=await fetch(`${PRIMER_API}?action=read&file=${encodeURIComponent(name)}`);const data=await res.json();document.getElementById("docTextarea").value=data.content;document.getElementById("editingDocName").textContent=name;document.getElementById("saveDocBtn").disabled=false;document.getElementById("setActiveBtn").disabled=false;loadDocList();}catch(err){clientLog("error",`Read doc error: ${err.message}`);}}
+async function saveDoc(){if(!selectedDoc)return;const form=new FormData();form.append("action","save");form.append("file",selectedDoc);form.append("content",document.getElementById("docTextarea").value);try{const data=await(await fetch(PRIMER_API,{method:"POST",body:form})).json();if(data.ok){setConsoleStatus(`Saved ${selectedDoc}`);if(selectedDoc===cachedPhilosophy.name){await loadActivePrimer();resetConversation();}}}catch(err){clientLog("error",`Save error: ${err.message}`);}}
+async function setActiveDoc(){if(!selectedDoc)return;const form=new FormData();form.append("action","set_active");form.append("file",selectedDoc);try{const data=await(await fetch(PRIMER_API,{method:"POST",body:form})).json();if(data.ok){setConsoleStatus(`${selectedDoc} set as active`);await loadActivePrimer();resetConversation();loadDocList();}}catch(err){clientLog("error",`Set active error: ${err.message}`);}}
+async function createNewDoc(){let name=document.getElementById("newDocName").value.trim();if(!name)return;if(!name.endsWith(".md"))name+=".md";const form=new FormData();form.append("action","save");form.append("file",name);form.append("content",`# ${name}\n\nEnter your coaching philosophy here.`);try{await fetch(PRIMER_API,{method:"POST",body:form});document.getElementById("newDocName").value="";await loadDocList();selectDoc(name);}catch(err){clientLog("error",`Create doc error: ${err.message}`);}}
+function setConsoleStatus(msg){const el=document.getElementById("consoleStatus");el.textContent=msg;setTimeout(()=>el.textContent="",3000);}
+function resetConversation(){conversationId=crypto.randomUUID();isFirstTurn=true;document.getElementById("transcriptDisplay").textContent="New conversation started.";clientLog("info",`Conversation reset — new id ${conversationId.substring(0,8)}`);}
+
+const clientLogEl=document.getElementById("clientLog"),clientLogs=[];
+function clientLog(level,message){const ts=new Date().toISOString().substring(11,23);clientLogs.push({ts,level,message});if(clientLogs.length>100)clientLogs.shift();renderClientLogs();}
+function renderClientLogs(){clientLogEl.innerHTML=clientLogs.map(e=>`<div class="log-entry log-${e.level}"><span class="ts">${e.ts}</span>${e.message}</div>`).join("");clientLogEl.scrollTop=clientLogEl.scrollHeight;}
+function clearClientLogs(){clientLogs.length=0;renderClientLogs();}
+
+const serverLogEl=document.getElementById("serverLog"),serverLogStatus=document.getElementById("serverLogStatus");
+let serverLogs=[],lastServerCount=0;
+async function pollServerLogs(){try{const res=await fetch(`${ENDPOINTS[state.env]}/logs?n=50`);if(!res.ok)throw new Error(`HTTP ${res.status}`);serverLogs=await res.json();if(serverLogs.length!==lastServerCount){lastServerCount=serverLogs.length;serverLogEl.innerHTML=serverLogs.map(e=>{const ts=e.ts.substring(11,23);const cls=e.level==="error"?"log-error":e.level==="warning"?"log-warn":"log-info";return`<div class="log-entry ${cls}"><span class="ts">${ts}</span><span class="step">[${e.step}]</span>${e.message}${e.detail?" — "+e.detail:""}</div>`;}).join("");serverLogEl.scrollTop=serverLogEl.scrollHeight;}serverLogStatus.textContent=`Last poll: ${new Date().toLocaleTimeString()}`;}catch(err){serverLogStatus.textContent=`Poll error: ${err.message}`;}}
+pollServerLogs();setInterval(pollServerLogs,3000);
+async function clearServerLogs(){serverLogs=[];lastServerCount=0;serverLogEl.innerHTML="";try{await fetch(`${ENDPOINTS[state.env]}/logs/clear`,{method:"POST"});clientLog("info","Server log buffer cleared");}catch(err){clientLog("error",`Clear failed: ${err.message}`);}}
+function copyLogs(){const az=serverLogs.map(e=>`${e.ts.substring(11,23)}[${e.step}]${e.message}${e.detail?" — "+e.detail:""}`).join("\n");const cl=clientLogs.map(e=>`${e.ts}${e.message}`).join("\n");navigator.clipboard.writeText(`Azure:\n${az}\n\nClient:\n${cl}`).then(()=>{const btn=document.querySelector('[onclick="copyLogs()"]');const orig=btn.textContent;btn.textContent="Copied!";setTimeout(()=>btn.textContent=orig,1500);}).catch(err=>clientLog("error",`Copy failed: ${err.message}`));}
+
+// ============================================================
+// AUDIO
+// One persistent <audio> element, unlocked during the START tap.
+// Playback uses arrayBuffer() — same approach as v0009 which worked.
+// Backend still streams (faster server-side), but we read the full
+// buffer before playing. Reliable on iOS; no decodeAudioData.
+//
+// Framing protocol from backend (v2.00.0012+):
+//   Bytes 0-3  : big-endian uint32 = length of coach text (N)
+//   Bytes 4..4+N : UTF-8 coach text
+//   Bytes 4+N.. : raw mp3 audio
+// ============================================================
+let sharedAudioEl = null;
+let audioUnlocked  = false;
+let audioCtx       = null;  // VAD only
+
+function getSharedAudioEl() {
+    if (!sharedAudioEl) {
+        sharedAudioEl = new Audio();
+        sharedAudioEl.setAttribute("playsinline", "");
+        sharedAudioEl.preload = "auto";
+    }
+    return sharedAudioEl;
+}
+
+async function unlockAudio() {
+    if (audioUnlocked) return;
+    // Mark true immediately — whether it works or not, never retry mid-conversation
+    // (a retry during playback triggers showInitOverlay again and breaks the UX)
+    audioUnlocked = true;
+    try {
+        const el = getSharedAudioEl();
+        el.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=";
+        await el.play();
+        await new Promise(r => setTimeout(r, 200));
+        el.pause();
+        el.currentTime = 0;
+        clientLog("info", "Audio unlocked");
+    } catch (err) {
+        clientLog("warn", `Audio unlock attempt: ${err.message} (continuing anyway)`);
+    }
+    // Prime AudioContext for VAD
+    try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === "suspended") await audioCtx.resume();
+    } catch (e) { clientLog("warn", `AudioContext init: ${e.message}`); }
+}
+
+async function playResponse(arrayBuffer, userText) {
+    // Parse framing header: 4-byte length + text + audio
+    const view    = new DataView(arrayBuffer);
+    const textLen = view.getUint32(0, false);
+    const coachText = new TextDecoder().decode(arrayBuffer.slice(4, 4 + textLen));
+    const audioBytes = arrayBuffer.slice(4 + textLen);
+
+    // Show text
+    transcriptDisplay.innerHTML = userText
+        ? `<span class="you-said">You: ${userText}</span>${coachText}`
+        : coachText;
+    clientLog("info", `Text: ${coachText.length} chars, audio: ${audioBytes.byteLength} bytes`);
+
+    if (audioBytes.byteLength === 0) return;
+
+    const audioUrl = URL.createObjectURL(new Blob([audioBytes], { type: "audio/mpeg" }));
+
+    await new Promise((resolve) => {
+        const audio = getSharedAudioEl();
+        audio.src = audioUrl;
+        audio.onended = () => {
+            URL.revokeObjectURL(audioUrl);
+            statusLabel.textContent = convoActive ? "Your turn…" : "Done";
+            statusLabel.className = "status-box active";
+            clientLog("info", "Playback complete");
+            resolve();
+        };
+        audio.onerror = () => {
+            clientLog("error", `Audio error: ${audio.error?.message || "unknown"}`);
+            URL.revokeObjectURL(audioUrl);
+            statusLabel.textContent = convoActive ? "Your turn…" : "Done";
+            statusLabel.className = "status-box active";
+            resolve();
+        };
+        audio.play().then(() => {
+            statusLabel.textContent = "Coach speaking…";
+            statusLabel.className = "status-box active";
+            clientLog("info", "Playback started");
+        }).catch(err => {
+            clientLog("error", `Playback blocked: ${err.message}`);
+            URL.revokeObjectURL(audioUrl);
+            statusLabel.textContent = convoActive ? "Your turn…" : "Done";
+            statusLabel.className = "status-box active";
+            resolve();
+        });
+    });
+}
+
+// ============================================================
+// SHARED STATE
+// ============================================================
+const micBtn=document.getElementById("micBtn"),animationWrapper=document.getElementById("animationWrapper");
+const statusLabel=document.getElementById("statusLabel"),transcriptDisplay=document.getElementById("transcriptDisplay");
+const permissionBanner=document.getElementById("permissionBanner"),levelRing=document.getElementById("levelRing");
+let isProcessing=false,convoActive=false,sharedStream=null;
+let analyser=null,vadRAF=null,mediaRecorder=null,audioChunks=[];
+let recognition=null,nativeTranscript="";
+
+if(navigator.permissions){navigator.permissions.query({name:"microphone"}).then(r=>{if(r.state==="denied")showPermissionError();r.onchange=()=>r.state==="denied"?showPermissionError():hidePermissionError();}).catch(()=>{});}
+function showPermissionError(){permissionBanner.style.display="block";statusLabel.textContent="Microphone blocked — see above";statusLabel.className="status-box error";clientLog("error","Microphone permission denied");}
+function hidePermissionError(){permissionBanner.style.display="none";}
+function cancelInit(){clientLog("info","User cancelled from overlay");stopConversation();}
+
+// ============================================================
+// BUTTON HANDLER
+// Mic permission requested BEFORE overlay.
+// Audio unlocked BEFORE overlay — during the gesture call stack.
+// ============================================================
+let micBusy=false;
+function handleMicPress(){if(micBusy){clientLog("warn","Duplicate tap ignored");return;}micBusy=true;setTimeout(()=>{micBusy=false;},1200);doMicAction();}
+
+async function doMicAction(){
+    if(isProcessing&&mode==="push")return;
+    if(mode==="conversation"){
+        if(!convoActive){
+            // Unlock audio FIRST — must happen closest to the tap gesture.
+            // getUserMedia is async and can push us outside iOS's gesture window.
+            await unlockAudio();
+            statusLabel.textContent="Allow microphone access…";statusLabel.className="status-box warmup-text";
+            clientLog("info","Requesting mic permission…");
+            let stream;
+            try{stream=await navigator.mediaDevices.getUserMedia({audio:true});}
+            catch(err){clientLog("error",`Mic denied: ${err.message}`);statusLabel.textContent="Ready";statusLabel.className="status-box";showPermissionError();return;}
+            clientLog("info","Mic granted");
+            startConversation(stream);
+        }else{stopConversation();}
+    }else{
+        await unlockAudio();
+        if(STT_ENGINE==="native")handleNativePush();else handleWhisperPush();
+    }
+}
+micBtn.addEventListener("click",handleMicPress);
+
+// ============================================================
+// CONVERSATION MODE
+// ============================================================
+async function startConversation(stream){
+    if(convoActive)return;
+    convoActive=true;sharedStream=stream;hidePermissionError();
+    micBtn.classList.add("active-convo");micBtn.textContent="END CHAT";
+    clientLog("info","Conversation started");
+    await warmUp();listenTurn();
+}
+
+function stopConversation(){
+    convoActive=false;hideInitOverlay();stopVAD();
+    if(recognition){try{recognition.abort();}catch(e){}}
+    if(mediaRecorder&&mediaRecorder.state!=="inactive"){
+        const mr=mediaRecorder; mediaRecorder=null; // null first so onstop is a no-op
+        try{mr.stop();}catch(e){}
+    } else { mediaRecorder=null; }
+    if(sharedStream){sharedStream.getTracks().forEach(t=>t.stop());sharedStream=null;}
+    const audio=getSharedAudioEl();audio.pause();audio.src="";
+    micBtn.classList.remove("active-convo","listening","warmup");micBtn.textContent="START";
+    animationWrapper.classList.remove("thinking","warmup");levelRing.style.opacity=0;
+    statusLabel.textContent="Conversation ended";statusLabel.className="status-box";
+    clientLog("info","Conversation ended");
+}
+
+async function warmUp(){
+    showInitOverlay("… initializing conversation …");
+    micBtn.classList.add("warmup");animationWrapper.classList.add("warmup");
+    statusLabel.textContent="Getting ready…";statusLabel.className="status-box warmup-text";
+    try{if(audioCtx&&audioCtx.state==="suspended"){await audioCtx.resume();}}catch(e){}
+    await new Promise(r=>setTimeout(r,WARMUP_MS));
+    micBtn.classList.remove("warmup");animationWrapper.classList.remove("warmup");hideInitOverlay();
+}
+
+function showInitOverlay(msg){document.getElementById("initText").textContent=msg||"… initializing …";document.getElementById("initOverlay").classList.add("show");}
+function hideInitOverlay(){document.getElementById("initOverlay").classList.remove("show");}
+function listenTurn(){if(!convoActive)return;clientLog("info",`listenTurn → ${STT_ENGINE}`);if(STT_ENGINE==="native")listenNative();else listenWhisper();}
+
+function listenNative(){
+    nativeTranscript="";recognition=new SpeechRecognition();recognition.lang="en-US";recognition.continuous=false;recognition.interimResults=true;
+    recognition.onstart=()=>{micBtn.classList.add("listening");statusLabel.textContent="Listening…";statusLabel.className="status-box active";startLevelMeter();};
+    recognition.onresult=(event)=>{let interim="",final="";for(let i=event.resultIndex;i<event.results.length;i++){const t=event.results[i][0].transcript;if(event.results[i].isFinal)final+=t;else interim+=t;}if(final)nativeTranscript+=final;transcriptDisplay.innerHTML=`<span class="you-said">You: ${nativeTranscript+interim}</span>`;};
+    recognition.onerror=(event)=>{clientLog("error",`Native STT error: ${event.error}`);if(event.error==="not-allowed"){showPermissionError();stopConversation();}};
+    recognition.onend=async()=>{stopLevelMeter();micBtn.classList.remove("listening");const t=nativeTranscript.trim();if(!convoActive)return;if(t)await processTurn(t,null);else if(convoActive)listenTurn();};
+    try{recognition.start();}catch(err){clientLog("error",`Native start error: ${err.message}`);}
+}
+
+function listenWhisper(){
+    try{
+        audioChunks=[];
+        let options={mimeType:"audio/webm"};
+        if(!MediaRecorder.isTypeSupported("audio/webm"))options=MediaRecorder.isTypeSupported("audio/mp4")?{mimeType:"audio/mp4"}:{};
+        clientLog("info",`Recorder mimeType: ${options.mimeType||"default"}`);
+        mediaRecorder=new MediaRecorder(sharedStream,options);
+        mediaRecorder.ondataavailable=(e)=>{if(e.data.size>0)audioChunks.push(e.data);};
+        mediaRecorder.onstop=async()=>{stopVAD();if(!convoActive||!mediaRecorder)return;const blob=new Blob(audioChunks,{type:mediaRecorder.mimeType});clientLog("info",`Utterance: ${blob.size} bytes`);if(blob.size>2000)await processTurn(null,blob);else if(convoActive)listenTurn();};
+        mediaRecorder.start();
+        micBtn.classList.add("listening");statusLabel.textContent="Listening…";statusLabel.className="status-box active";
+        transcriptDisplay.innerHTML=`<span class="you-said">🎤 Listening… speak now</span>`;
+        clientLog("info","Recorder started, VAD active");startVAD();
+    }catch(err){clientLog("error",`listenWhisper failed: ${err.message}`);statusLabel.textContent="Mic error — tap END and retry";statusLabel.className="status-box error";}
+}
+
+function startVAD(){
+    if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    const source=audioCtx.createMediaStreamSource(sharedStream);analyser=audioCtx.createAnalyser();analyser.fftSize=512;source.connect(analyser);
+    const data=new Uint8Array(analyser.fftSize);let speechStarted=false,speechStartTime=0,silenceStart=null;
+    function loop(){
+        if(!convoActive||!analyser)return;analyser.getByteTimeDomainData(data);
+        let sum=0;for(let i=0;i<data.length;i++){const v=(data[i]-128)/128;sum+=v*v;}const rms=Math.sqrt(sum/data.length);
+        levelRing.style.opacity=1;levelRing.style.transform=`scale(${1+Math.min(rms*4,0.5)})`;
+        const now=performance.now();
+        if(rms>SILENCE_THRESHOLD){if(!speechStarted){speechStarted=true;speechStartTime=now;}silenceStart=null;}
+        else{if(speechStarted&&(now-speechStartTime)>MIN_SPEECH_MS){if(silenceStart===null)silenceStart=now;else if(now-silenceStart>SILENCE_DURATION){clientLog("info","VAD: silence — submitting");if(mediaRecorder&&mediaRecorder.state!=="inactive")mediaRecorder.stop();return;}}}
+        vadRAF=requestAnimationFrame(loop);
+    }
+    vadRAF=requestAnimationFrame(loop);
+}
+function stopVAD(){if(vadRAF){cancelAnimationFrame(vadRAF);vadRAF=null;}levelRing.style.opacity=0;analyser=null;}
+
+let levelRAF=null;
+function startLevelMeter(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();const source=audioCtx.createMediaStreamSource(sharedStream);const a=audioCtx.createAnalyser();a.fftSize=512;source.connect(a);const data=new Uint8Array(a.fftSize);function loop(){a.getByteTimeDomainData(data);let sum=0;for(let i=0;i<data.length;i++){const v=(data[i]-128)/128;sum+=v*v;}const rms=Math.sqrt(sum/data.length);levelRing.style.opacity=1;levelRing.style.transform=`scale(${1+Math.min(rms*4,0.5)})`;levelRAF=requestAnimationFrame(loop);}loop();}
+function stopLevelMeter(){if(levelRAF){cancelAnimationFrame(levelRAF);levelRAF=null;}levelRing.style.opacity=0;}
+
+async function processTurn(text,blob){
+    if(isProcessing){clientLog("warn","Already processing — ignored");return;}
+    isProcessing=true;micBtn.classList.remove("listening");animationWrapper.classList.add("thinking");
+    statusLabel.textContent="... thinking ...";statusLabel.className="status-box thinking-text";
+    const formData=new FormData();let url;
+    if(blob){const ext=blob.type.includes("mp4")?"m4a":"webm";formData.append("file",blob,`user_voice.${ext}`);url=`${ENDPOINTS[state.env]}/upload-audio`;}
+    else{formData.append("text",text);url=`${ENDPOINTS[state.env]}/coach-text`;}
+    appendCommonFields(formData);
+    const startTime=Date.now();
+    try{
+        const response=await fetch(url,{method:"POST",body:formData});
+        clientLog(response.ok?"info":"error",`HTTP ${response.status} in ${Date.now()-startTime}ms`);
+        if(!response.ok)throw new Error(`HTTP ${response.status}`);
+        // arrayBuffer() waits for full response — same as v0009, reliable on iOS
+        const buf=await response.arrayBuffer();
+        clientLog("info",`Full response buffered: ${buf.byteLength} bytes`);
+        await playResponse(buf,text||"");
+    }catch(error){
+        clientLog("error",`Pipeline fault: ${error.message}`);
+        statusLabel.textContent="Error — listening again";statusLabel.className="status-box error";
+    }finally{
+        isProcessing=false;animationWrapper.classList.remove("thinking");
+        if(convoActive)setTimeout(()=>{if(convoActive)listenTurn();},200);
+    }
+}
+
+// ============================================================
+// PUSH-TO-TALK MODE
+// ============================================================
+let pushRecording=false;
+async function handleWhisperPush(){
+    if(!pushRecording){
+        try{audioChunks=[];if(!sharedStream)sharedStream=await navigator.mediaDevices.getUserMedia({audio:true});hidePermissionError();
+            let options={mimeType:"audio/webm"};if(!MediaRecorder.isTypeSupported("audio/webm"))options=MediaRecorder.isTypeSupported("audio/mp4")?{mimeType:"audio/mp4"}:{};
+            micBtn.classList.add("warmup");statusLabel.textContent="Getting ready…";statusLabel.className="status-box warmup-text";
+            mediaRecorder=new MediaRecorder(sharedStream,options);
+            mediaRecorder.ondataavailable=(e)=>{if(e.data.size>0)audioChunks.push(e.data);};
+            mediaRecorder.onstop=async()=>{const blob=new Blob(audioChunks,{type:mediaRecorder.mimeType});await processPushTurn(null,blob);};
+            mediaRecorder.start();await new Promise(r=>setTimeout(r,WARMUP_MS));
+            pushRecording=true;micBtn.classList.remove("warmup");micBtn.classList.add("active-convo");micBtn.textContent="STOP";
+            statusLabel.textContent="Listening — speak now";statusLabel.className="status-box active";
+        }catch(err){clientLog("error",`Mic error: ${err.message}`);showPermissionError();}
+    }else{if(mediaRecorder&&mediaRecorder.state!=="inactive")mediaRecorder.stop();pushRecording=false;micBtn.classList.remove("active-convo");}
+}
+function handleNativePush(){
+    if(!pushRecording){
+        nativeTranscript="";recognition=new SpeechRecognition();recognition.lang="en-US";recognition.continuous=true;recognition.interimResults=true;
+        recognition.onstart=()=>{pushRecording=true;micBtn.classList.add("active-convo");micBtn.textContent="STOP";statusLabel.textContent="Listening — speak now";statusLabel.className="status-box active";};
+        recognition.onresult=(event)=>{let interim="",final="";for(let i=event.resultIndex;i<event.results.length;i++){const t=event.results[i][0].transcript;if(event.results[i].isFinal)final+=t;else interim+=t;}if(final)nativeTranscript+=final;transcriptDisplay.innerHTML=`<span class="you-said">You: ${nativeTranscript+interim}</span>`;};
+        recognition.onerror=(e)=>clientLog("error",`Native STT error: ${e.error}`);
+        recognition.onend=async()=>{pushRecording=false;micBtn.classList.remove("active-convo");micBtn.textContent="START";const t=nativeTranscript.trim();if(t)await processPushTurn(t,null);};
+        recognition.start();
+    }else{recognition.stop();}
+}
+async function processPushTurn(text,blob){
+    isProcessing=true;micBtn.classList.add("disabled");micBtn.textContent="WAIT";
+    animationWrapper.classList.add("thinking");statusLabel.textContent="... thinking ...";statusLabel.className="status-box thinking-text";
+    const formData=new FormData();let url;
+    if(blob){const ext=blob.type.includes("mp4")?"m4a":"webm";formData.append("file",blob,`user_voice.${ext}`);url=`${ENDPOINTS[state.env]}/upload-audio`;}
+    else{formData.append("text",text);url=`${ENDPOINTS[state.env]}/coach-text`;}
+    appendCommonFields(formData);
+    const startTime=Date.now();
+    try{
+        const response=await fetch(url,{method:"POST",body:formData});
+        clientLog(response.ok?"info":"error",`HTTP ${response.status} in ${Date.now()-startTime}ms`);
+        if(!response.ok)throw new Error(`HTTP ${response.status}`);
+        const buf=await response.arrayBuffer();
+        await playResponse(buf,text||"");
+    }catch(error){clientLog("error",`Pipeline fault: ${error.message}`);statusLabel.textContent="Execution fault.";statusLabel.className="status-box error";}
+    finally{isProcessing=false;micBtn.classList.remove("disabled");micBtn.textContent="START";animationWrapper.classList.remove("thinking");}
+}
+
+function appendCommonFields(formData){
+    formData.append("ai",state.ai);formData.append("tts",state.tts);formData.append("conversation_id",conversationId);
+    if(isFirstTurn&&cachedPhilosophy.content){formData.append("philosophy",cachedPhilosophy.content);formData.append("philosophy_hash",cachedPhilosophy.hash);clientLog("info",`First turn — primer: ${cachedPhilosophy.name}`);isFirstTurn=false;}
+    else{formData.append("philosophy_hash",cachedPhilosophy.hash);}
+}
+</script>
+</body>
+</html>
