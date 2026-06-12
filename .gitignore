@@ -5,3 +5,4 @@ __pycache__/
 *.pyo
 philosophy.md
 logs/
+.DS_Store
