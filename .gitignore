@@ -6,3 +6,4 @@ __pycache__/
 philosophy.md
 logs/
 .DS_Store
+venv/

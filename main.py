@@ -1,10 +1,16 @@
 """
 Discovery Coaching Engine
 Location: /var/www/coach-engine/dev/main.py
-Version: v2.00.0012
+Version: v2.00.0013
 
 CHANGELOG:
-v2.00.0012 - Streaming TTS:
+v2.00.0013 - Fix streaming TTS timeout and error handling:
+             * Replaced single 60s timeout with separate connect/read timeouts.
+               httpx read timeout applies per-chunk for streaming, so long
+               responses no longer time out mid-stream.
+             * Added try/except inside streaming generators — errors now log
+               and raise cleanly instead of silently dropping the stream.
+             * Fixes PC/Chrome hang where TTS stream never completed.
              * OpenAI TTS now streams audio chunks as they arrive — playback
                starts in ~0.5-1s instead of waiting for the full file.
              * ElevenLabs TTS also streams via their streaming endpoint.
@@ -189,59 +195,67 @@ async def openai_tts_stream(text: str, api_key: str):
     """
     Yields the framing header first (4-byte length + UTF-8 coach text),
     then streams raw MP3 audio chunks from OpenAI TTS as they arrive.
-    Using mp3 for streaming — OpenAI streams mp3 natively; wav requires
-    the full file before it's valid.
     """
     text_bytes = text.encode("utf-8")
-    # Frame 1: 4-byte big-endian length + text
     yield struct.pack(">I", len(text_bytes)) + text_bytes
     log("info", "TTS:OpenAI", f"Streaming TTS for {len(text)} chars")
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        async with client.stream(
-            "POST",
-            "https://api.openai.com/v1/audio/speech",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "tts-1", "voice": "onyx", "input": text, "response_format": "mp3"},
-        ) as response:
-            response.raise_for_status()
-            total = 0
-            async for chunk in response.aiter_bytes(chunk_size=4096):
-                total += len(chunk)
-                yield chunk
-            log("info", "TTS:OpenAI", f"Stream complete: {total} bytes")
+    try:
+        # Use separate connect/read timeouts for streaming — read timeout applies
+        # per-chunk, not for the entire stream, so long responses don't time out.
+        timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST",
+                "https://api.openai.com/v1/audio/speech",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={"model": "tts-1", "voice": "onyx", "input": text, "response_format": "mp3"},
+            ) as response:
+                response.raise_for_status()
+                total = 0
+                async for chunk in response.aiter_bytes(chunk_size=4096):
+                    total += len(chunk)
+                    yield chunk
+                log("info", "TTS:OpenAI", f"Stream complete: {total} bytes")
+    except Exception as e:
+        log("error", "TTS:OpenAI", f"Stream error: {str(e)}", type(e).__name__)
+        raise
 
 
 async def elevenlabs_tts_stream(text: str, api_key: str):
     """
     Same framing protocol — header chunk first, then audio chunks.
-    ElevenLabs streaming endpoint returns mp3 chunks.
     """
     voice_id = "pNInz6obpgDQGcFmaJgB"
     text_bytes = text.encode("utf-8")
     yield struct.pack(">I", len(text_bytes)) + text_bytes
     log("info", "TTS:ElevenLabs", f"Streaming TTS for {len(text)} chars")
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        async with client.stream(
-            "POST",
-            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
-            headers={"xi-api-key": api_key, "Content-Type": "application/json"},
-            json={
-                "text": text,
-                "model_id": "eleven_turbo_v2_5",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
-            },
-        ) as response:
-            if response.status_code != 200:
-                body = await response.aread()
-                log("error", "TTS:ElevenLabs", f"HTTP {response.status_code}", body[:300].decode("utf-8", errors="replace"))
-                response.raise_for_status()
-            total = 0
-            async for chunk in response.aiter_bytes(chunk_size=4096):
-                total += len(chunk)
-                yield chunk
-            log("info", "TTS:ElevenLabs", f"Stream complete: {total} bytes")
+    try:
+        timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST",
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
+                headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+                json={
+                    "text": text,
+                    "model_id": "eleven_turbo_v2_5",
+                    "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+                },
+            ) as response:
+                if response.status_code != 200:
+                    body = await response.aread()
+                    log("error", "TTS:ElevenLabs", f"HTTP {response.status_code}", body[:300].decode("utf-8", errors="replace"))
+                    response.raise_for_status()
+                total = 0
+                async for chunk in response.aiter_bytes(chunk_size=4096):
+                    total += len(chunk)
+                    yield chunk
+                log("info", "TTS:ElevenLabs", f"Stream complete: {total} bytes")
+    except Exception as e:
+        log("error", "TTS:ElevenLabs", f"Stream error: {str(e)}", type(e).__name__)
+        raise
 
 
 def get_keys() -> dict:
@@ -255,7 +269,7 @@ def get_keys() -> dict:
 
 @app.get("/")
 def read_root():
-    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0012"}
+    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0013"}
 
 
 @app.get("/logs")
