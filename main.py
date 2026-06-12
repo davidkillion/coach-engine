@@ -232,12 +232,20 @@ def get_keys() -> dict:
 
 @app.get("/")
 def read_root():
-    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0004"}
+    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0008"}
 
 
 @app.get("/logs")
 def get_logs(n: int = 50):
     return JSONResponse(content=log_buffer[-n:])
+
+
+@app.post("/logs/clear")
+def clear_logs():
+    """Empty the in-memory log buffer so the debug panel actually clears."""
+    log_buffer.clear()
+    log("info", "LOGS", "Log buffer cleared")
+    return {"ok": True}
 
 
 # --- WHISPER PATH: audio in, audio out ---
