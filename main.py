@@ -1,26 +1,30 @@
 """
 Discovery Coaching Engine
 Location: /var/www/coach-engine/dev/main.py
-Version: v2.00.0009
+Version: v2.00.0012
 
 CHANGELOG:
-v2.00.0009 - Header version sync (cosmetic). Added POST /logs/clear endpoint so the debug panel's Clear button
-             actually empties the in-memory log buffer (was repopulating on
-             next poll). Header version synced to match functional version.
-v2.00.0004 - Dual STT support + CORS header fix:
-             * NEW /coach-text endpoint — accepts already-transcribed text
-               (from browser Web Speech API), skips Whisper, runs AI + TTS.
-               Used by Chrome/Edge desktop + Android (the "Native" STT path).
-             * /upload-audio unchanged — the Whisper path for iOS/Safari/Firefox.
-             * Both paths share conversation history + primer cache.
-             * CORS expose_headers=["X-Coach-Text"] so the browser can read the
-               coach text on cross-origin responses (fixes "No text returned").
-v2.00.0003 - Removed all primer fallback logic.
+v2.00.0012 - Streaming TTS:
+             * OpenAI TTS now streams audio chunks as they arrive — playback
+               starts in ~0.5-1s instead of waiting for the full file.
+             * ElevenLabs TTS also streams via their streaming endpoint.
+             * Coach text is sent as the FIRST chunk in a simple framing protocol:
+               - Chunk 1: 4-byte big-endian length prefix + UTF-8 coach text
+               - Remaining chunks: raw audio bytes
+             * Frontend reads chunk 1 to get the text (displays immediately),
+               then feeds the rest into the Web Audio API for streaming playback.
+             * process_coaching() split into get_coach_text() + stream_tts() so
+               text is available before TTS begins.
+             * SILENCE_DURATION on VAD reduced recommendation: see frontend.
+v2.00.0009 - Header version sync. Added POST /logs/clear.
+v2.00.0004 - Dual STT support + CORS expose_headers fix.
+v2.00.0003 - Removed primer fallback logic.
 v2.00.0002 - Conversation history + primer-as-full-prompt + prompt caching.
 """
 
 import os
 import io
+import struct
 import asyncio
 import httpx
 import anthropic
@@ -96,7 +100,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Coach-Text"],  # let browser read coach text cross-origin
+    expose_headers=["X-Coach-Text"],
 )
 
 
@@ -159,47 +163,11 @@ async def run_gemini(messages: list, philosophy: str, api_key: str) -> str:
         return text
 
 
-# --- TTS: OpenAI ---
-async def openai_tts(text: str, api_key: str) -> bytes:
-    log("info", "TTS:OpenAI", f"Generating audio for {len(text)} chars")
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            "https://api.openai.com/v1/audio/speech",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "tts-1", "voice": "onyx", "input": text, "response_format": "wav"},
-        )
-        response.raise_for_status()
-        data = response.content
-        log("info", "TTS:OpenAI", f"Complete: {len(data)} bytes")
-        return data
-
-
-# --- TTS: ElevenLabs ---
-async def elevenlabs_tts(text: str, api_key: str) -> bytes:
-    voice_id = "pNInz6obpgDQGcFmaJgB"
-    log("info", "TTS:ElevenLabs", f"Generating audio for {len(text)} chars")
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-            headers={"xi-api-key": api_key, "Content-Type": "application/json"},
-            json={
-                "text": text,
-                "model_id": "eleven_turbo_v2_5",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
-            },
-        )
-        if response.status_code != 200:
-            log("error", "TTS:ElevenLabs", f"HTTP {response.status_code}", response.text[:300])
-            response.raise_for_status()
-        data = response.content
-        log("info", "TTS:ElevenLabs", f"Complete: {len(data)} bytes")
-        return data
-
-
-# --- Shared: run AI + TTS given transcribed text ---
-async def process_coaching(user_text: str, ai: str, tts: str, conversation_id: str,
-                           philosophy_text: str, philosophy_hash: str,
-                           keys: dict) -> tuple[bytes, str, str]:
+# --- Get coach text only (no TTS) ---
+async def get_coach_text(user_text: str, ai: str, conversation_id: str,
+                         philosophy_text: str, philosophy_hash: str,
+                         keys: dict) -> str:
+    """Run AI, update conversation history, return coach text."""
     conv = get_conversation(conversation_id, philosophy_hash)
     loop = asyncio.get_event_loop()
 
@@ -212,16 +180,68 @@ async def process_coaching(user_text: str, ai: str, tts: str, conversation_id: s
 
     conv["messages"].append({"role": "assistant", "content": coach_text})
     trim_history(conv)
+    return coach_text
 
-    if tts == "elevenlabs":
-        audio_data = await elevenlabs_tts(coach_text, keys["elevenlabs"])
-        media_type = "audio/mpeg"
-    else:
-        audio_data = await openai_tts(coach_text, keys["openai"])
-        media_type = "audio/wav"
 
-    log("info", "COMPLETE", f"Success — {len(audio_data)} bytes, history now {len(conv['messages'])} msgs")
-    return audio_data, media_type, coach_text
+# --- Streaming TTS generators ---
+
+async def openai_tts_stream(text: str, api_key: str):
+    """
+    Yields the framing header first (4-byte length + UTF-8 coach text),
+    then streams raw MP3 audio chunks from OpenAI TTS as they arrive.
+    Using mp3 for streaming — OpenAI streams mp3 natively; wav requires
+    the full file before it's valid.
+    """
+    text_bytes = text.encode("utf-8")
+    # Frame 1: 4-byte big-endian length + text
+    yield struct.pack(">I", len(text_bytes)) + text_bytes
+    log("info", "TTS:OpenAI", f"Streaming TTS for {len(text)} chars")
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        async with client.stream(
+            "POST",
+            "https://api.openai.com/v1/audio/speech",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": "tts-1", "voice": "onyx", "input": text, "response_format": "mp3"},
+        ) as response:
+            response.raise_for_status()
+            total = 0
+            async for chunk in response.aiter_bytes(chunk_size=4096):
+                total += len(chunk)
+                yield chunk
+            log("info", "TTS:OpenAI", f"Stream complete: {total} bytes")
+
+
+async def elevenlabs_tts_stream(text: str, api_key: str):
+    """
+    Same framing protocol — header chunk first, then audio chunks.
+    ElevenLabs streaming endpoint returns mp3 chunks.
+    """
+    voice_id = "pNInz6obpgDQGcFmaJgB"
+    text_bytes = text.encode("utf-8")
+    yield struct.pack(">I", len(text_bytes)) + text_bytes
+    log("info", "TTS:ElevenLabs", f"Streaming TTS for {len(text)} chars")
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        async with client.stream(
+            "POST",
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
+            headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+            json={
+                "text": text,
+                "model_id": "eleven_turbo_v2_5",
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+            },
+        ) as response:
+            if response.status_code != 200:
+                body = await response.aread()
+                log("error", "TTS:ElevenLabs", f"HTTP {response.status_code}", body[:300].decode("utf-8", errors="replace"))
+                response.raise_for_status()
+            total = 0
+            async for chunk in response.aiter_bytes(chunk_size=4096):
+                total += len(chunk)
+                yield chunk
+            log("info", "TTS:ElevenLabs", f"Stream complete: {total} bytes")
 
 
 def get_keys() -> dict:
@@ -235,7 +255,7 @@ def get_keys() -> dict:
 
 @app.get("/")
 def read_root():
-    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0009"}
+    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0012"}
 
 
 @app.get("/logs")
@@ -245,13 +265,12 @@ def get_logs(n: int = 50):
 
 @app.post("/logs/clear")
 def clear_logs():
-    """Empty the in-memory log buffer so the debug panel actually clears."""
     log_buffer.clear()
     log("info", "LOGS", "Log buffer cleared")
     return {"ok": True}
 
 
-# --- WHISPER PATH: audio in, audio out ---
+# --- WHISPER PATH: audio in, streaming audio out ---
 @app.post("/upload-audio")
 async def handle_audio_coaching(
     file:             UploadFile = File(...),
@@ -277,18 +296,18 @@ async def handle_audio_coaching(
     keys = get_keys()
     try:
         audio_bytes = await file.read()
-        filename    = f"user_voice.{file_extension}"
-        user_text   = await whisper_transcribe(audio_bytes, filename, keys["openai"])
+        user_text   = await whisper_transcribe(audio_bytes, f"user_voice.{file_extension}", keys["openai"])
+        coach_text  = await get_coach_text(user_text, ai, conversation_id, philosophy_text, philosophy_hash, keys)
 
-        audio_data, media_type, coach_text = await process_coaching(
-            user_text, ai, tts, conversation_id, philosophy_text, philosophy_hash, keys
-        )
+        if tts == "elevenlabs":
+            stream_gen = elevenlabs_tts_stream(coach_text, keys["elevenlabs"])
+            media_type = "audio/mpeg"
+        else:
+            stream_gen = openai_tts_stream(coach_text, keys["openai"])
+            media_type = "audio/mpeg"  # OpenAI streaming returns mp3
 
-        return StreamingResponse(
-            io.BytesIO(audio_data),
-            media_type=media_type,
-            headers={"X-Coach-Text": make_safe_header(coach_text)}
-        )
+        return StreamingResponse(stream_gen, media_type=media_type)
+
     except HTTPException:
         raise
     except Exception as e:
@@ -296,7 +315,7 @@ async def handle_audio_coaching(
         raise HTTPException(status_code=500, detail=f"Engine fault: {str(e)}")
 
 
-# --- NATIVE PATH: text in, audio out (browser already transcribed) ---
+# --- NATIVE PATH: text in, streaming audio out ---
 @app.post("/coach-text")
 async def handle_text_coaching(
     text:             str = Form(...),
@@ -316,14 +335,17 @@ async def handle_text_coaching(
 
     keys = get_keys()
     try:
-        audio_data, media_type, coach_text = await process_coaching(
-            text.strip(), ai, tts, conversation_id, philosophy_text, philosophy_hash, keys
-        )
-        return StreamingResponse(
-            io.BytesIO(audio_data),
-            media_type=media_type,
-            headers={"X-Coach-Text": make_safe_header(coach_text)}
-        )
+        coach_text = await get_coach_text(text.strip(), ai, conversation_id, philosophy_text, philosophy_hash, keys)
+
+        if tts == "elevenlabs":
+            stream_gen = elevenlabs_tts_stream(coach_text, keys["elevenlabs"])
+            media_type = "audio/mpeg"
+        else:
+            stream_gen = openai_tts_stream(coach_text, keys["openai"])
+            media_type = "audio/mpeg"
+
+        return StreamingResponse(stream_gen, media_type=media_type)
+
     except HTTPException:
         raise
     except Exception as e:
