@@ -3,7 +3,6 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
-philosophy.md
+*.md
 logs/
 .DS_Store
-venv/
