@@ -1,9 +1,22 @@
 """
 Discovery Coaching Engine
 Location: /var/www/coach-engine/dev/main.py
-Version: v2.00.0013
+Version: v2.00.0014
 
 CHANGELOG:
+v2.00.0014 - Text-out path (tts="none") for typed/chat consumers:
+             * Both /coach-text and /upload-audio now accept tts="none".
+               When set, the engine runs STT (audio path only) + AI, then
+               returns the coach text as JSON and SKIPS TTS entirely.
+               No OpenAI/ElevenLabs TTS call = no audio latency, no TTS cost.
+             * Response shape for tts="none":
+                 {"coach_text": "...", "conversation_id": "..."}
+             * Enables the tri-mode RestartWorks frontend (/test2): typing and
+               voice-typing use tts="none" (fast text reply); conversation mode
+               keeps the existing streaming-audio path unchanged.
+             * Existing audio behavior is 100% unchanged when tts != "none"
+               (absent or any other value), so /test/index.html is unaffected.
+             * No signature change — tts was already a form field on both routes.
 v2.00.0013 - Fix streaming TTS timeout and error handling:
              * Replaced single 60s timeout with separate connect/read timeouts.
                httpx read timeout applies per-chunk for streaming, so long
@@ -269,7 +282,7 @@ def get_keys() -> dict:
 
 @app.get("/")
 def read_root():
-    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0013"}
+    return {"engine": "Coach Engine", "status": "operational", "version": "v2.00.0014"}
 
 
 @app.get("/logs")
@@ -284,7 +297,7 @@ def clear_logs():
     return {"ok": True}
 
 
-# --- WHISPER PATH: audio in, streaming audio out ---
+# --- WHISPER PATH: audio in, streaming audio out (or text-only when tts="none") ---
 @app.post("/upload-audio")
 async def handle_audio_coaching(
     file:             UploadFile = File(...),
@@ -313,6 +326,19 @@ async def handle_audio_coaching(
         user_text   = await whisper_transcribe(audio_bytes, f"user_voice.{file_extension}", keys["openai"])
         coach_text  = await get_coach_text(user_text, ai, conversation_id, philosophy_text, philosophy_hash, keys)
 
+        # --- TEXT-ONLY PATH (tts="none"): skip TTS, return JSON text ---
+        # Used by typed/voice-typed modes that want a fast text reply with no
+        # audio synthesis. We still ran STT above (voice came in as audio) so the
+        # transcript is included, then the coach text is returned as JSON.
+        if tts == "none":
+            log("info", "COMPLETE", f"Text-only reply (tts=none) — {len(coach_text)} chars")
+            return JSONResponse(content={
+                "coach_text": coach_text,
+                "conversation_id": conversation_id,
+                "transcript": user_text,
+            })
+
+        # --- STREAMING AUDIO PATH (unchanged) ---
         if tts == "elevenlabs":
             stream_gen = elevenlabs_tts_stream(coach_text, keys["elevenlabs"])
             media_type = "audio/mpeg"
@@ -329,7 +355,7 @@ async def handle_audio_coaching(
         raise HTTPException(status_code=500, detail=f"Engine fault: {str(e)}")
 
 
-# --- NATIVE PATH: text in, streaming audio out ---
+# --- NATIVE PATH: text in, streaming audio out (or text-only when tts="none") ---
 @app.post("/coach-text")
 async def handle_text_coaching(
     text:             str = Form(...),
@@ -351,6 +377,17 @@ async def handle_text_coaching(
     try:
         coach_text = await get_coach_text(text.strip(), ai, conversation_id, philosophy_text, philosophy_hash, keys)
 
+        # --- TEXT-ONLY PATH (tts="none"): skip TTS, return JSON text ---
+        # The fast path for typed/voice-typed chat: no TTS call, no audio latency,
+        # no TTS cost. Returns the coach text as JSON for the frontend to display.
+        if tts == "none":
+            log("info", "COMPLETE", f"Text-only reply (tts=none) — {len(coach_text)} chars")
+            return JSONResponse(content={
+                "coach_text": coach_text,
+                "conversation_id": conversation_id,
+            })
+
+        # --- STREAMING AUDIO PATH (unchanged) ---
         if tts == "elevenlabs":
             stream_gen = elevenlabs_tts_stream(coach_text, keys["elevenlabs"])
             media_type = "audio/mpeg"
